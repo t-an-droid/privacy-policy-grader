@@ -5,11 +5,11 @@ services:
     buildCommand: pip install -r backend/requirements.txt
     startCommand: gunicorn --chdir backend "app:create_app()" --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     envVars:
-      - key: GEMINI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
       - key: FLASK_DEBUG
         value: False
-      - key: GEMINI_MODEL
-        value: gemini-1.5-flash
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
       - key: PYTHON_VERSION
         value: 3.11.9
