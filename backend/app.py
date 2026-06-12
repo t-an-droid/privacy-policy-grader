@@ -10,7 +10,7 @@ Features
 - Jinja2 templating from frontend/templates/
 - Request-logging after_request hook
 - In-memory sliding-window rate limiter (per IP)
-- Demo mode banner injected into templates when GEMINI_API_KEY is absent
+- Demo mode banner injected into templates when GROQ_API_KEY is absent
 
 Architecture Note
 -----------------
