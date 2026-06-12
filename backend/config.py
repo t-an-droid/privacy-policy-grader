@@ -19,18 +19,16 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------
 # Resolve the project root and load .env
 # ---------------------------------------------------------------
-# __file__  → backend/config.py
-# parent    → backend/
-# parent²   → project root (privacy-policy-grader/)
 BASE_DIR: Path = Path(__file__).resolve().parent.parent
 ENV_PATH: Path = BASE_DIR / ".env"
 
 if ENV_PATH.is_file():
     load_dotenv(dotenv_path=ENV_PATH)
 else:
-    # Try sibling .env in backend/ directory
     load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
+print(f"[config] GROQ_API_KEY found: {bool(os.getenv('GROQ_API_KEY'))}")
+print(f"[config] .env path tried: {ENV_PATH}, exists: {ENV_PATH.is_file()}")
 
 class Config:
     """
@@ -39,7 +37,7 @@ class Config:
     Usage
     -----
     from config import Config
-    key = Config.GEMINI_API_KEY
+    key = Config.GROQ_API_KEY
     """
 
     # ----------------------------------------------------------
@@ -49,12 +47,12 @@ class Config:
     TESTING: bool = os.getenv("FLASK_TESTING", "False").lower() in ("true", "1", "yes")
 
     # ----------------------------------------------------------
-    # Google Gemini API
+    # Groq API
     # ----------------------------------------------------------
-    GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or None
+    GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY") or None
 
     # If no API key is set → run in Demo Mode (mock LLM responses)
-    DEMO_MODE: bool = not bool(GEMINI_API_KEY)
+    DEMO_MODE: bool = not bool(os.getenv("GROQ_API_KEY"))
 
     # ----------------------------------------------------------
     # Database
@@ -75,7 +73,6 @@ class Config:
     # ----------------------------------------------------------
     SCRAPE_TIMEOUT: int = int(os.getenv("SCRAPE_TIMEOUT", "15"))  # seconds
 
-    # Rotate through these user-agents to avoid 403s
     USER_AGENT_POOL: list[str] = [
         (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -95,15 +92,15 @@ class Config:
     ]
 
     # ----------------------------------------------------------
-    # Gemini model parameters
+    # Groq model parameters
     # ----------------------------------------------------------
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-    GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
-    GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.2"))
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "4096"))
+    GROQ_TEMPERATURE: float = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
 
     # Maximum characters of policy text sent to LLM
-    # (to stay within token limits; truncate if needed)
-    LLM_MAX_CHARS: int = 30_000
+    # Kept low to stay within Groq free tier TPM limits
+    LLM_MAX_CHARS: int = 7_000
 
     # ----------------------------------------------------------
     # Application identity
@@ -127,7 +124,7 @@ class Config:
         "A": 90,
         "B": 80,
         "C": 70,
-        "D": 60,
+        "D": 50,
         "F": 0,
     }
 
