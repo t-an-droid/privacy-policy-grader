@@ -1,20 +1,21 @@
 """
-services/llm_service.py — ONLY file that calls Google Gemini API.
+services/llm_service.py — ONLY file that calls Groq API.
 
 This is the single point of LLM interaction for the entire project.
 All other analysis is performed by our custom Python code.
 
 Responsibilities
 ----------------
-- Truncate policy text to fit within Gemini's context window.
+- Truncate policy text to fit within the model's context window.
 - Build a structured JSON-mode prompt with pre-computed metrics.
-- Call Gemini API and parse the response.
+- Call Groq API and parse the response.
 - Return a validated, typed findings dict.
 - Fall back gracefully (demo mode) when no API key is available.
 """
 
 import json
 import re
+import os
 from typing import Any, Dict, List, Optional
 
 # Severity ordering for red flag sorting (lower = more severe)
@@ -23,7 +24,7 @@ _SEVERITY_ORDER: Dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low":
 from config import Config
 
 # ---------------------------------------------------------------------------
-# Demo-mode mock response (used when GEMINI_API_KEY is absent)
+# Demo-mode mock response (used when GROQ_API_KEY is absent)
 # ---------------------------------------------------------------------------
 
 _DEMO_RESPONSE: Dict[str, Any] = {
@@ -111,9 +112,9 @@ def _dedup_and_sort_flags(red_flags: List[Dict]) -> List[Dict]:
 
 class PrivacyAnalyzer:
     """
-    Wraps the Gemini API for structured privacy-policy analysis.
+    Wraps the Groq API for structured privacy-policy analysis.
 
-    THIS IS THE ONLY CLASS IN THE PROJECT THAT CALLS GEMINI.
+    THIS IS THE ONLY CLASS IN THE PROJECT THAT CALLS THE LLM API.
 
     All other analysis (readability, jargon, dark patterns, grading,
     verification) is performed by our own Python code.
@@ -121,22 +122,17 @@ class PrivacyAnalyzer:
 
     def __init__(self) -> None:
         self._client = None  # lazy initialisation
-        self._demo = Config.DEMO_MODE
+        self._demo = not bool(os.getenv("GROQ_API_KEY"))
+        print(f"[llm_service __init__] demo={self._demo}, key_present={bool(os.getenv('GROQ_API_KEY'))}")
 
         if not self._demo:
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=Config.GEMINI_API_KEY)
-                self._client = genai.GenerativeModel(
-                    model_name=Config.GEMINI_MODEL,
-                    generation_config={
-                        "temperature": Config.GEMINI_TEMPERATURE,
-                        "max_output_tokens": Config.GEMINI_MAX_TOKENS,
-                        "response_mime_type": "application/json",
-                    },
-                )
+                from groq import Groq
+                self._client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+                self._model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+                print(f"[llm_service] Groq client initialized, model={self._model}")
             except Exception as exc:
-                print(f"[llm_service] Gemini init failed: {exc}. Falling back to demo mode.")
+                print(f"[llm_service] Groq init failed: {exc}. Falling back to demo mode.")
                 self._demo = True
 
     # ------------------------------------------------------------------
@@ -145,18 +141,8 @@ class PrivacyAnalyzer:
 
     @staticmethod
     def _build_prompt(policy_text: str, metrics: Dict) -> str:
-        """
-        Construct a structured JSON-mode prompt for Gemini.
-
-        The prompt includes:
-        - Pre-computed NLP metrics (so Gemini doesn't re-derive them)
-        - The policy text (truncated)
-        - Exact output schema
-        - Chain-of-thought instruction
-        """
         truncated = policy_text[:Config.LLM_MAX_CHARS]
 
-        # Format key metrics for context
         metrics_summary = (
             f"- Word count: {metrics.get('word_count', 'unknown')}\n"
             f"- Flesch Reading Ease: {metrics.get('flesch_reading_ease', 'unknown')} "
@@ -192,7 +178,7 @@ Extract and analyse the privacy policy's practices. Think step-by-step:
 5. Note compliance indicators (GDPR/CCPA/COPPA references).
 6. Write a concise, plain-English summary.
 
-OUTPUT FORMAT — return ONLY valid JSON matching this schema exactly:
+OUTPUT FORMAT — return ONLY valid JSON matching this schema exactly, no markdown, no explanation:
 {{
   "data_collected": [
     {{"type": "string", "purpose": "string", "sensitivity": "low|medium|high"}}
@@ -221,10 +207,6 @@ OUTPUT FORMAT — return ONLY valid JSON matching this schema exactly:
 
     @staticmethod
     def _validate_response(raw: Dict) -> Dict:
-        """
-        Ensure the response matches our schema.
-        Fill in missing keys with safe defaults.
-        """
         def ensure_list(key: str) -> list:
             val = raw.get(key, [])
             return val if isinstance(val, list) else []
@@ -283,28 +265,43 @@ OUTPUT FORMAT — return ONLY valid JSON matching this schema exactly:
         preprocessor_metrics: Dict,
     ) -> Dict[str, Any]:
         """
-        Analyse a privacy policy using Gemini.
+        Analyse a privacy policy using Groq.
+        Method name kept as analyze_with_gemini for backwards compatibility
+        with all callers in the codebase.
 
-        Parameters
-        ----------
-        policy_text          : str  — clean policy text
-        preprocessor_metrics : dict — output of PolicyPreprocessor.process()
-
-        Returns
-        -------
-        Validated findings dict (matches schema above).
+        Returns validated findings dict.
         If DEMO_MODE or API failure → returns realistic mock response.
         """
-        # Demo mode — return mock without calling API
+
+        print(f"[Groq] analyze_with_gemini called — demo={self._demo}, client={self._client is not None}")
+
         if self._demo or self._client is None:
             print("[llm_service] Running in DEMO MODE — returning mock response.")
-            return dict(_DEMO_RESPONSE)  # return a copy
+            return dict(_DEMO_RESPONSE)
 
         prompt = self._build_prompt(policy_text, preprocessor_metrics)
 
+        print(f"[Groq] Calling API — {len(policy_text)} chars of policy text...")
+
         try:
-            response = self._client.generate_content(prompt)
-            raw_text = response.text.strip()
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert privacy policy analyst. Always respond with valid JSON only, no markdown, no explanation.",
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                temperature=0.2,
+                max_tokens=4096,
+            )
+
+            raw_text = response.choices[0].message.content.strip()
+            print(f"[Groq] Response received — {len(raw_text)} chars")
 
             # Strip markdown code fences if present
             raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
@@ -318,5 +315,5 @@ OUTPUT FORMAT — return ONLY valid JSON matching this schema exactly:
             return dict(_DEMO_RESPONSE)
 
         except Exception as exc:
-            print(f"[llm_service] Gemini API error: {exc}. Returning demo response.")
+            print(f"[llm_service] Groq API error: {exc}. Returning demo response.")
             return dict(_DEMO_RESPONSE)
